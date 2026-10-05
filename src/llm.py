@@ -26,8 +26,12 @@ PROVIDERS = {
                "chat": "gemini-2.5-flash-lite", "embed": "gemini-embedding-001"},
     "anthropic": {"key": "ANTHROPIC_API_KEY", "base_url": None,
                   "chat": "claude-opus-5-5", "embed": None},
+    # Custom OpenAI-compatible gateway (e.g. shopaikey). Key/base_url/models read at runtime
+    # so .env loaded in bench_kg.main() is respected even though this module is imported earlier.
+    "custom": {"key": "CUSTOM_API_KEY", "base_url": "CUSTOM_BASE_URL",
+               "chat": "gpt-4o-mini", "embed": "text-embedding-3-small"},
 }
-PROVIDER_ORDER = ["openai", "openrouter", "gemini", "anthropic"]
+PROVIDER_ORDER = ["openai", "openrouter", "gemini", "anthropic", "custom"]
 
 # USD per 1M tokens (input, output). Check each provider's pricing page before reporting real numbers.
 PRICES_PER_M = {
@@ -88,6 +92,9 @@ def _strip_fences(text: str) -> str:
 def _openai_client(provider: str):
     from openai import OpenAI
 
+    if provider == "custom":
+        return OpenAI(api_key=os.environ["CUSTOM_API_KEY"],
+                      base_url=os.getenv("CUSTOM_BASE_URL"))
     cfg = PROVIDERS[provider]
     return OpenAI(api_key=os.environ[cfg["key"]], base_url=cfg["base_url"])
 
@@ -97,9 +104,15 @@ class MeteredLLM:
     def __init__(self, chat_provider: str | None = None, embed_provider: str | None = None) -> None:
         self.chat_provider = chat_provider or pick_provider("LLM_PROVIDER", need_embeddings=False)
         self.embed_provider = embed_provider or pick_provider("EMBEDDING_PROVIDER", need_embeddings=True)
-        self.chat_model_id = os.getenv(f"{self.chat_provider.upper()}_CHAT_MODEL", PROVIDERS[self.chat_provider]["chat"])
-        self.embed_model_id = os.getenv(f"{self.embed_provider.upper()}_EMBEDDING_MODEL",
-                                        PROVIDERS[self.embed_provider]["embed"])
+        if self.chat_provider == "custom":
+            self.chat_model_id = os.getenv("CUSTOM_CHAT_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini"))
+        else:
+            self.chat_model_id = os.getenv(f"{self.chat_provider.upper()}_CHAT_MODEL", PROVIDERS[self.chat_provider]["chat"])
+        if self.embed_provider == "custom":
+            self.embed_model_id = os.getenv("CUSTOM_EMBEDDING_MODEL", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+        else:
+            self.embed_model_id = os.getenv(f"{self.embed_provider.upper()}_EMBEDDING_MODEL",
+                                            PROVIDERS[self.embed_provider]["embed"])
         self.chat_model = f"{self.chat_provider}:{self.chat_model_id}"
         self.embedding_model = f"{self.embed_provider}:{self.embed_model_id}"
         self._backend_name = self.embedding_model
